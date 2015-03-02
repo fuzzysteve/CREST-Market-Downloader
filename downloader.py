@@ -11,12 +11,13 @@ import base64
 import os
 import requests
 import webbrowser
-inifile=os.path.dirname(__file__)+"downloader.ini"
 import json
 import time
 import csv
 
 import pprint
+
+inifile=os.path.dirname(__file__)+os.sep+"downloader.ini"
 
 class authHandler(BaseHTTPRequestHandler):
     def do_GET(self):
