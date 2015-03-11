@@ -16,7 +16,7 @@ My first wx program, so probably hideously inefficient
 
 Dumps all orders (well, as long as there's less than 1000 buy or sell for each item) in a region into orders.csv
 
-Takes around 40-50 minutes to process. I need to work in some kind of limiter, because most people won't want everything.
+Takes around 15 minutes to process. I need to work in some kind of limiter, because most people won't want everything.
 
 Now also needs a cacert.pem file in the same directory as the script. In part, so it packages nicely with pyinstaller.
 
