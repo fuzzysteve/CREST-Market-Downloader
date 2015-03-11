@@ -9,15 +9,15 @@ import threading
 import urlparse
 import base64
 import os
-import requests
 import webbrowser
 import json
 import time
 import csv
+import requests
+import grequests
+import time
+import locale
 
-import pprint
-
-inifile=os.path.dirname(__file__)+os.sep+"downloader.ini"
 
 class authHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -34,140 +34,143 @@ class authHandler(BaseHTTPRequestHandler):
     
  
 # Create a new frame class, derived from the wxPython Frame.
-class MyFrame(wx.Frame):
+class marketView(wx.Frame):
 
     def __init__(self, parent, id, title):
-        # First, call the base class' __init__ method to create the frame
         wx.Frame.__init__(self, parent, id, title)
-
-
-        # Add a panel and some controls to display the size and position
         panel = wx.Panel(self, -1)
         self.panel = panel
+        self.login=wx.Button(panel,id=wx.ID_ANY,label='Login')
         self.regionCombo = wx.ComboBox(panel,-1,"Login to populate regions",style=wx.CB_READONLY|wx.CB_SORT)
-
-        # Use some sizers for layout of the widgets
-
-        
         self.getregion=wx.Button(panel,id=wx.ID_ANY,label='Dump Region')
-        self.getregion.Bind(wx.EVT_BUTTON,self.getRegion)
         self.getregion.Disable()
-        
-        
-
-        
-        
         menubar = wx.MenuBar()
         login=wx.Menu()
-        login.Append(101,'&Login','Log into Eve SSO');
-        menubar.Append(login, '&Login')
-        self.SetMenuBar(menubar)
-        self.Bind(wx.EVT_MENU,self.onLogin,id=101)
-        self.regionCombo.Bind(wx.EVT_COMBOBOX,self.onRegionSelect)
+
         self.statusbar=self.CreateStatusBar(style=0)
         self.statusbar.SetFieldsCount(2)
-        self.statusbar.SetStatusWidths([-3, -1])
-        self.SetStatusText("Please Log in",0)
-        
-        sizer = wx.FlexGridSizer(2, 2, 5, 5)
-        pub.subscribe(self.doLogin,'login')
-        
+        self.statusbar.SetStatusWidths([-2, -1])
+        self.SetStatusText("Please Log in",0)   
+        sizer = wx.FlexGridSizer(1, 3, 5, 5)
+        sizer.Add(self.login)
         sizer.Add(self.regionCombo)
         sizer.Add(self.getregion)
-        
-        
         border = wx.BoxSizer()
         border.Add(sizer, 0, wx.ALL, 15)
         panel.SetSizerAndFit(border)
-        
-        
-        
         self.Fit()
         self.Centre()
 
+    def updateStatus(self,data,extra1=0):
+        self.SetStatusText(data,extra1)
+        
+        
+    def updateRegions(self,regions):
+        self.regionCombo.Clear()
+        for item in regions['items']:
+            self.regionCombo.Append(item['name'],item)
+        
+        
+
+class marketModel:
+    def __init__(self,settings):
+        self.settings=dict()
+        self.settings['PORT'] = settings.getint('Config','Port')
+        self.settings['CLIENTID'] = settings.get('Config','Clientid')
+        self.settings['SECRET'] = settings.get('Config','Secret')
+        self.settings['USERAGENT'] = settings.get('Config','UserAgent')
+        self.settings['BASEURL'] = settings.get('Config','BaseUrl')
+        self.settings['accessToken'] = ''
+        self.settings['refreshToken'] =''
+        self.settings['endPoints'] = ''
+        self.settings['expires']=-1
+        
+        
     def getRegion(self,event):
         self.SetStatusText("Dump beginning.",0)
-        itemCount=str(len(self.marketItems))
+        itemCount=len(self.marketItems)
         count=0
+        batch=0
+        startTime=time.time()
+        buyUrls=[]
+        sellUrls=[]
         with open('orders.csv', 'wb') as csvfile:
             writer = csv.writer(csvfile,dialect='excel')
             writer.writerow(['Buy','typeid','volume','issued','duration','Volume Entered','Minimum Volume','range','price','locationid','locationname'])
             for item in self.marketItems:
                 count+=1
-                self.SetStatusText("Dumping "+item['name'],0)
-                self.SetStatusText(str(count)+"/"+itemCount,1)
+                batch+=1
                 wx.Yield()
-                buy=self.getEndpoint(self.currentRegion['marketBuyOrders']['href'], 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8',{'type':item['href']})
-                sell=self.getEndpoint(self.currentRegion['marketBuyOrders']['href'], 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8',{'type':item['href']})
-                for buyitem in buy['items']:
-                    writer.writerow([1,buyitem['type']['id'],buyitem['volume'],buyitem['issued'],buyitem['duration'],buyitem['volumeEntered'],buyitem['minVolume'],buyitem['range'],buyitem['price'],buyitem['location']['id'],buyitem['location']['name']])
-                for sellitem in sell['items']:
-                    writer.writerow([0,sellitem['type']['id'],sellitem['volume'],sellitem['issued'],sellitem['duration'],sellitem['volumeEntered'],1,sellitem['range'],sellitem['price'],sellitem['location']['id'],sellitem['location']['name']])
-        self.SetStatusText("Complete.",0)        
+                buyUrls.append(self.currentRegion['marketBuyOrders']['href']+"?type="+item['href'])
+                sellUrls.append(self.currentRegion['marketSellOrders']['href']+"?type="+item['href'])
+                if (itemCount==count) or (batch==20):
+                    buy=self.getMultipleEndpoint(buyUrls, 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8')
+                    sell=self.getMultipleEndpoint(sellUrls, 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8')
+                    batch=0
+                    now=time.time()
+                    sofar=now-startTime
+                    fraction=float(count)/float(itemCount)
+                    total=sofar/fraction
+                    remaining=total-sofar
+                    self.SetStatusText("Completion: "+locale.format("%d",count,grouping=True)+'/'+locale.format("%d",itemCount,grouping=True),0)
+                    self.SetStatusText(locale.format("%d",sofar,grouping=True)+'/'+locale.format("%d",remaining,grouping=True)+'/'+locale.format("%d",total,grouping=True),1)
+                    wx.Yield()
+                    buyUrls=[]
+                    sellUrls=[]
+                    for buyitem in buy:
+                        writer.writerow([1,buyitem['type']['id'],buyitem['volume'],buyitem['issued'],buyitem['duration'],buyitem['volumeEntered'],buyitem['minVolume'],buyitem['range'],buyitem['price'],buyitem['location']['id'],buyitem['location']['name']])
+                    for sellitem in sell:
+                        writer.writerow([0,sellitem['type']['id'],sellitem['volume'],sellitem['issued'],sellitem['duration'],sellitem['volumeEntered'],1,sellitem['range'],sellitem['price'],sellitem['location']['id'],sellitem['location']['name']])
+        self.SetStatusText("Complete.",0)
+        self.SetStatusText("",1)
+        pub.sendMessage('completedDump')
         
         
-        
-        
-        
-        
-     
-    def onLogin(self,event):
-        global PORT
-        global CLIENTID
-        webbrowser.open('https://login.eveonline.com/oauth/authorize?response_type=code&redirect_uri=http://localhost:'+`PORT`+'/&client_id='+CLIENTID+'&scope=publicData&state=')
+    def getMultipleEndpoint(self,endpoints,accept):
+        if self.settings['expires']<time.time():
+            self.refreshTokens()
+        items=[]
+        headers = {'Authorization':'Bearer '+ self.settings['accessToken'],
+            'Accept':accept,
+            'User-Agent':self.settings['USERAGENT']
+            }
+        rs = (grequests.get(u,headers=headers) for u in endpoints)
+        responses=grequests.map(rs)
+        for response in responses:
+            add=response.json()
+            items.extend(add['items'])
+            response.close()
+        return items
         
     def doLogin(self,message):
-        global CLIENTID
-        global SECRET
-        global BASEURL
-        global USERAGENT
-        global accessToken
-        global refreshToken
-        global expires
-        global endPoints
-        headers = {'User-Agent':USERAGENT}
+        headers = {'User-Agent':self.settings['USERAGENT']}
         query = {'grant_type':'authorization_code','code':message}
-        r = requests.get(BASEURL,headers=headers)
-        endPoints=r.json()
-        headers = {'Authorization':'Basic '+ base64.b64encode(CLIENTID+':'+SECRET),'User-Agent':USERAGENT}
-        r = requests.post(endPoints['authEndpoint']['href'],params=query,headers=headers)
+        r = requests.get(self.settings['BASEURL'],headers=headers)
+        self.settings['endPoints']=r.json()
+        headers = {'Authorization':'Basic '+ base64.b64encode(self.settings['CLIENTID']+':'+self.settings['SECRET']),'User-Agent':self.settings['USERAGENT']}
+        r = requests.post(self.settings['endPoints']['authEndpoint']['href'],params=query,headers=headers)
         response = r.json()
-        accessToken=response['access_token']
-        refreshToken=response['refresh_token']
-        expires=time.time()+float(response['expires_in'])-20
+        self.settings['accessToken']=response['access_token']
+        self.settings['refreshToken']=response['refresh_token']
+        self.settings['expires']=time.time()+float(response['expires_in'])-20
         self.loadBaseData()
         
     def refreshTokens(self):
-        global CLIENTID
-        global SECRET
-        global BASEURL
-        global USERAGENT
-        global accessToken
-        global refreshToken
-        global expires
-        global endPoints
-        headers = {'Authorization':'Basic '+ base64.b64encode(CLIENTID+':'+SECRET),'User-Agent':USERAGENT}
-        query = {'grant_type':'refresh_token','refresh_token':refreshToken}
+        headers = {'Authorization':'Basic '+ base64.b64encode(self.settings['CLIENTID']+':'+self.settings['SECRET']),'User-Agent':self.settings['USERAGENT']}
+        query = {'grant_type':'refresh_token','refresh_token':self.settings['refreshToken']}
         r = requests.post(endPoints['authEndpoint']['href'],params=query,headers=headers)
         response = r.json()
-        accessToken=response['access_token']
-        refreshToken=response['refresh_token']
-        expires=time.time()+float(response['expires_in'])-20
+        self.settings['accessToken']=response['access_token']
+        self.settings['refreshToken']=response['refresh_token']
+        self.settings['expires']=time.time()+float(response['expires_in'])-20
 
         
     def loadBaseData(self):
-        global accessToken
-        global refreshToken
-        global expires
-        global endPoints
-        global USERAGENT
-        headers = {'Authorization':'Bearer '+ accessToken,'User-Agent':USERAGENT}
+        headers = {'Authorization':'Bearer '+ self.settings['accessToken'],'User-Agent':self.settings['USERAGENT']}
         self.SetStatusText("Loading Regions",0)
-        r = requests.get(endPoints['regions']['href'],headers=headers)
+        r = requests.get(self.settings['endPoints']['regions']['href'],headers=headers)
         self.regions=r.json()
-        self.regionCombo.Clear()
-        for item in self.regions['items']:
-            self.regionCombo.Append(item['name'],item)
+        pub.sendMessage('updateRegions')
         self.SetStatusText("Loading Market Types",0)
         self.marketItems=self.walkMarketTypes('application/vnd.ccp.eve.MarketTypeCollection-v1+json; charset=utf-8');
         self.SetStatusText("Select a region to continue.",0)
@@ -175,15 +178,11 @@ class MyFrame(wx.Frame):
         
     
     def getEndpoint(self,endpoint,accept,parameters=None):
-        global accessToken
-        global refreshToken
-        global expires
-        global USERAGENT
-        if expires<time.time():
+        if self.settings['expires']<time.time():
             self.refreshTokens()
-        headers = {'Authorization':'Bearer '+ accessToken,
+        headers = {'Authorization':'Bearer '+ self.settings['accessToken'],
             'Accept':accept,
-            'User-Agent':USERAGENT
+            'User-Agent':self.settings['USERAGENT']
             }
         if parameters is not None:
             r = requests.get(endpoint,params=parameters,headers=headers)
@@ -209,8 +208,7 @@ class MyFrame(wx.Frame):
         
     def walkMarketTypes(self,accept):
         returnCollection=[]
-        global endPoints
-        url=endPoints['marketTypes']['href']
+        url=self.settings['endPoints']['marketTypes']['href']
         page=0
         while True:
             page=page+1
@@ -227,52 +225,74 @@ class MyFrame(wx.Frame):
         self.SetStatusText('',1)
         return returnCollection
         
+    def SetStatusText(self,data,id):
+        pub.sendMessage('updateStatus',data=data,extra1=id)
+
+    
+
+
+
+
+class marketController:
+    
+    def __init__(self,app,inifile):
+        
+        self.view = marketView(None, -1, "Market Loader")
+
+        self.view.login.Bind(wx.EVT_BUTTON,self.onLogin)
+        self.view.regionCombo.Bind(wx.EVT_COMBOBOX,self.onRegionSelect)
         
 
-    
+        self.view.Show(True)        
+        app.SetTopWindow(self.view)
+        settings = ConfigParser.ConfigParser()
+        settings.read(inifile)
+        self.model=marketModel(settings)
+        
+        self.view.getregion.Bind(wx.EVT_BUTTON,self.model.getRegion)
+        
+        server = HTTPServer(('', settings.getint('Config','Port')), authHandler)
+        server_thread = threading.Thread(target=server.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+        pub.subscribe(self.doLoginController,'login')
+        pub.subscribe(self.updateStatusController,'updateStatus')
+        pub.subscribe(self.updateRegionsController,'updateRegions')
+        pub.subscribe(self.completedDump,'completedDump')
+
+    def onLogin(self,event):
+        webbrowser.open('https://login.eveonline.com/oauth/authorize?response_type=code&redirect_uri=http://localhost:'+`self.model.settings['PORT']`+'/&client_id='+self.model.settings['CLIENTID']+'&scope=publicData&state=')
+
     def onRegionSelect(self,event):
-        selected=self.regionCombo.GetClientData(self.regionCombo.GetSelection())
-        self.currentRegion=self.getEndpoint(selected['href'], 'application/vnd.ccp.eve.Region-v1+json; charset=utf-8')
-        self.getregion.Enable()
-        self.SetStatusText("Ready.",0)
+        selected=self.view.regionCombo.GetClientData(self.view.regionCombo.GetSelection())
+        self.model.currentRegion=self.model.getEndpoint(selected['href'], 'application/vnd.ccp.eve.Region-v1+json; charset=utf-8')
+        self.view.getregion.Enable()
+        self.view.SetStatusText("Ready.",0)
+        
+    def doLoginController(self,message):
+        self.view.login.Disable()
+        self.model.doLogin(message)
 
-
-# Every wxWidgets application must have a class derived from wx.App
-class MyApp(wx.App):
-
-    # wxWindows calls this method to initialize the application
-    def OnInit(self):
-
-        # Create an instance of our customized Frame class
-        frame = MyFrame(None, -1, "Market Loader")
-        frame.Show(True)
-
-        # Tell wxWindows that this is our main window
-        self.SetTopWindow(frame)
-
-        # Return a success flag
-        return True
-
-
-
+    def updateStatusController(self,data,extra1=0):
+        self.view.updateStatus(data,extra1)
     
+    def getRegionController(self,event):
+        self.view.getregion.Disable()
+        self.view.regionCombo.Disable()
+        self.model.getRegion()
+    
+    def completedDump(self,event):
+        self.view.getregion.Enable()
+        self.view.regionCombo.Enable()
+
+    def updateRegionsController(self):
+        self.view.updateRegions(self.model.regions)
+
 if __name__ == '__main__':
-    settings = ConfigParser.ConfigParser()
-    settings.read(inifile)
-    PORT = settings.getint('Config','Port')
-    CLIENTID = settings.get('Config','Clientid')
-    SECRET = settings.get('Config','Secret')
-    USERAGENT = settings.get('Config','UserAgent')
-    BASEURL = settings.get('Config','BaseUrl')
-    accessToken = ''
-    refreshToken =''
-    endPoints = ''
-    expires=-1
-    server = HTTPServer(('', PORT), authHandler)
-    server_thread = threading.Thread(target=server.serve_forever)
-    server_thread.daemon = True
-    server_thread.start()
-    app = MyApp(0)     # Create an instance of the application class
+    inifile=os.path.dirname(__file__)+os.sep+"downloader.ini"
+    inifile=inifile.strip('\\')
+    app = wx.App(False)
+    controller = marketController(app,inifile)     # Create an instance of the application class
     app.MainLoop()     # Tell it to start processing events
 
 
