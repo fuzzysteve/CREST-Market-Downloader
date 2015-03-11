@@ -18,4 +18,6 @@ Dumps all orders (well, as long as there's less than 1000 buy or sell for each i
 
 Takes around 40-50 minutes to process. I need to work in some kind of limiter, because most people won't want everything.
 
+Now also needs a cacert.pem file in the same directory as the script. In part, so it packages nicely with pyinstaller.
 
+https://www.fuzzwork.co.uk/resources/CrestDownloader.zip for a packaged version, just configure the downloader.ini
