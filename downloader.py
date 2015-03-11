@@ -43,6 +43,7 @@ class marketView(wx.Frame):
         self.login=wx.Button(panel,id=wx.ID_ANY,label='Login')
         self.regionCombo = wx.ComboBox(panel,-1,"Login to populate regions",style=wx.CB_READONLY|wx.CB_SORT)
         self.getregion=wx.Button(panel,id=wx.ID_ANY,label='Dump Region')
+        self.save=wx.Button(panel,id=wx.ID_ANY,label='File Location')
         self.getregion.Disable()
         menubar = wx.MenuBar()
         login=wx.Menu()
@@ -51,10 +52,11 @@ class marketView(wx.Frame):
         self.statusbar.SetFieldsCount(2)
         self.statusbar.SetStatusWidths([-2, -1])
         self.SetStatusText("Please Log in",0)   
-        sizer = wx.FlexGridSizer(1, 3, 5, 5)
+        sizer = wx.FlexGridSizer(2, 3, 5, 5)
         sizer.Add(self.login)
         sizer.Add(self.regionCombo)
         sizer.Add(self.getregion)
+        sizer.Add(self.save)
         border = wx.BoxSizer()
         border.Add(sizer, 0, wx.ALL, 15)
         panel.SetSizerAndFit(border)
@@ -69,8 +71,17 @@ class marketView(wx.Frame):
         self.regionCombo.Clear()
         for item in regions['items']:
             self.regionCombo.Append(item['name'],item)
-        
-        
+    
+    def showDir(self):
+        path= os.getcwd()
+        dlg = wx.DirDialog(
+            self, "Save file in ...", 
+            style=wx.DD_DEFAULT_STYLE|wx.DD_DIR_MUST_EXIST|wx.DD_CHANGE_DIR
+            )
+        if dlg.ShowModal() == wx.ID_OK:
+            path = dlg.GetPath()
+        dlg.Destroy()
+        return path
 
 class marketModel:
     def __init__(self,settings):
@@ -84,7 +95,9 @@ class marketModel:
         self.settings['refreshToken'] =''
         self.settings['endPoints'] = ''
         self.settings['expires']=-1
-        
+        self.cert_path = os.path.dirname(os.path.abspath(__file__))+os.sep+'cacert.pem'
+        self.directory = os.getcwd()
+    
         
     def getRegion(self,event):
         self.SetStatusText("Dump beginning.",0)
@@ -94,7 +107,7 @@ class marketModel:
         startTime=time.time()
         buyUrls=[]
         sellUrls=[]
-        with open('orders.csv', 'wb') as csvfile:
+        with open(self.directory+'\\orders.csv', 'wb') as csvfile:
             writer = csv.writer(csvfile,dialect='excel')
             writer.writerow(['Buy','typeid','volume','issued','duration','Volume Entered','Minimum Volume','range','price','locationid','locationname'])
             for item in self.marketItems:
@@ -134,7 +147,7 @@ class marketModel:
             'Accept':accept,
             'User-Agent':self.settings['USERAGENT']
             }
-        rs = (grequests.get(u,headers=headers) for u in endpoints)
+        rs = (grequests.get(u,headers=headers,verify=self.cert_path) for u in endpoints)
         responses=grequests.map(rs)
         for response in responses:
             add=response.json()
@@ -145,10 +158,10 @@ class marketModel:
     def doLogin(self,message):
         headers = {'User-Agent':self.settings['USERAGENT']}
         query = {'grant_type':'authorization_code','code':message}
-        r = requests.get(self.settings['BASEURL'],headers=headers)
+        r = requests.get(self.settings['BASEURL'],headers=headers,verify=self.cert_path)
         self.settings['endPoints']=r.json()
         headers = {'Authorization':'Basic '+ base64.b64encode(self.settings['CLIENTID']+':'+self.settings['SECRET']),'User-Agent':self.settings['USERAGENT']}
-        r = requests.post(self.settings['endPoints']['authEndpoint']['href'],params=query,headers=headers)
+        r = requests.post(self.settings['endPoints']['authEndpoint']['href'],params=query,headers=headers,verify=self.cert_path)
         response = r.json()
         self.settings['accessToken']=response['access_token']
         self.settings['refreshToken']=response['refresh_token']
@@ -158,7 +171,7 @@ class marketModel:
     def refreshTokens(self):
         headers = {'Authorization':'Basic '+ base64.b64encode(self.settings['CLIENTID']+':'+self.settings['SECRET']),'User-Agent':self.settings['USERAGENT']}
         query = {'grant_type':'refresh_token','refresh_token':self.settings['refreshToken']}
-        r = requests.post(endPoints['authEndpoint']['href'],params=query,headers=headers)
+        r = requests.post(endPoints['authEndpoint']['href'],params=query,headers=headers,verify=self.cert_path)
         response = r.json()
         self.settings['accessToken']=response['access_token']
         self.settings['refreshToken']=response['refresh_token']
@@ -168,7 +181,7 @@ class marketModel:
     def loadBaseData(self):
         headers = {'Authorization':'Bearer '+ self.settings['accessToken'],'User-Agent':self.settings['USERAGENT']}
         self.SetStatusText("Loading Regions",0)
-        r = requests.get(self.settings['endPoints']['regions']['href'],headers=headers)
+        r = requests.get(self.settings['endPoints']['regions']['href'],headers=headers,verify=self.cert_path)
         self.regions=r.json()
         pub.sendMessage('updateRegions')
         self.SetStatusText("Loading Market Types",0)
@@ -185,9 +198,9 @@ class marketModel:
             'User-Agent':self.settings['USERAGENT']
             }
         if parameters is not None:
-            r = requests.get(endpoint,params=parameters,headers=headers)
+            r = requests.get(endpoint,params=parameters,headers=headers,verify=self.cert_path)
         else:
-            r = requests.get(endpoint,headers=headers)
+            r = requests.get(endpoint,headers=headers,verify=self.cert_path)
         return r.json()
     
     
@@ -241,6 +254,7 @@ class marketController:
 
         self.view.login.Bind(wx.EVT_BUTTON,self.onLogin)
         self.view.regionCombo.Bind(wx.EVT_COMBOBOX,self.onRegionSelect)
+        self.view.save.Bind(wx.EVT_BUTTON, self.onSaveFile)
         
 
         self.view.Show(True)        
@@ -273,6 +287,9 @@ class marketController:
         self.view.login.Disable()
         self.model.doLogin(message)
 
+    def onSaveFile(self,event):
+        self.model.directory=self.view.showDir()
+          
     def updateStatusController(self,data,extra1=0):
         self.view.updateStatus(data,extra1)
     
@@ -289,15 +306,8 @@ class marketController:
         self.view.updateRegions(self.model.regions)
 
 if __name__ == '__main__':
-    inifile=os.path.dirname(__file__)+os.sep+"downloader.ini"
-    inifile=inifile.strip('\\')
+    inifile=os.path.dirname(os.path.abspath(__file__))+os.sep+"downloader.ini"
     app = wx.App(False)
     controller = marketController(app,inifile)     # Create an instance of the application class
     app.MainLoop()     # Tell it to start processing events
-
-
-
-
-
-
 
