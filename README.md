@@ -21,3 +21,7 @@ Takes around 15 minutes to process. I need to work in some kind of limiter, beca
 Now also needs a cacert.pem file in the same directory as the script. In part, so it packages nicely with pyinstaller.
 
 https://www.fuzzwork.co.uk/resources/CrestDownloader.zip for a packaged version, just configure the downloader.ini
+
+
+The filter file format is one typeid per line.
+To clear the filter, once set, go to the filter dialog and hit cancel.
