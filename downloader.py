@@ -17,7 +17,7 @@ import requests
 import grequests
 import time
 import locale
-
+from datetime import date
 
 class authHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -129,39 +129,43 @@ class MarketModel:
         startTime=time.time()
         buyUrls=[]
         sellUrls=[]
-        with open(self.directory+'\\orders.csv', 'wb') as csvfile:
-            writer = csv.writer(csvfile,dialect='excel')
-            writer.writerow(['Buy','typeid','volume','issued','duration','Volume Entered','Minimum Volume','range','price','locationid','locationname'])
-            for item in self.marketItems:
-                count+=1
-                wx.Yield()
-                if filterme:
-                    if (int(item['id']) in filterlist):
-                        buyUrls.append(self.currentRegion['marketBuyOrders']['href']+"?type="+item['href'])
-                        sellUrls.append(self.currentRegion['marketSellOrders']['href']+"?type="+item['href'])
-                        batch+=1
-                else:
-                        buyUrls.append(self.currentRegion['marketBuyOrders']['href']+"?type="+item['href'])
-                        sellUrls.append(self.currentRegion['marketSellOrders']['href']+"?type="+item['href'])
-                        batch+=1
-                if (itemCount==count) or (batch==20):
-                    buy=self.get_multiple_endpoint(buyUrls, 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8')
-                    sell=self.get_multiple_endpoint(sellUrls, 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8')
-                    batch=0
-                    now=time.time()
-                    sofar=now-startTime
-                    fraction=float(count)/float(itemCount)
-                    total=sofar/fraction
-                    remaining=total-sofar
-                    self.set_status_text("Completion: "+locale.format("%d",count,grouping=True)+'/'+locale.format("%d",itemCount,grouping=True),0)
-                    self.set_status_text(locale.format("%d",sofar,grouping=True)+'/'+locale.format("%d",remaining,grouping=True)+'/'+locale.format("%d",total,grouping=True),1)
-                    wx.Yield()
-                    buyUrls=[]
-                    sellUrls=[]
-                    for buyitem in buy:
-                        writer.writerow([1,buyitem['type']['id'],buyitem['volume'],buyitem['issued'],buyitem['duration'],buyitem['volumeEntered'],buyitem['minVolume'],buyitem['range'],buyitem['price'],buyitem['location']['id'],buyitem['location']['name']])
-                    for sellitem in sell:
-                        writer.writerow([0,sellitem['type']['id'],sellitem['volume'],sellitem['issued'],sellitem['duration'],sellitem['volumeEntered'],1,sellitem['range'],sellitem['price'],sellitem['location']['id'],sellitem['location']['name']])
+        for item in self.marketItems:
+         count+=1
+         wx.Yield()
+         if filterme:
+             if (int(item['id']) in filterlist):
+                 buyUrls.append(self.currentRegion['marketBuyOrders']['href']+"?type="+item['href'])
+                 sellUrls.append(self.currentRegion['marketSellOrders']['href']+"?type="+item['href'])
+                 batch+=1
+         else:
+                 buyUrls.append(self.currentRegion['marketBuyOrders']['href']+"?type="+item['href'])
+                 sellUrls.append(self.currentRegion['marketSellOrders']['href']+"?type="+item['href'])
+                 batch+=1
+         if (itemCount==count) or (batch==20):
+             buy=self.get_multiple_endpoint(buyUrls, 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8')
+             sell=self.get_multiple_endpoint(sellUrls, 'application/vnd.ccp.eve.MarketOrderCollection-v1+json; charset=utf-8')
+             batch=0
+             now=time.time()
+             sofar=now-startTime
+             fraction=float(count)/float(itemCount)
+             total=sofar/fraction
+             remaining=total-sofar
+             self.set_status_text("Completion: "+locale.format("%d",count,grouping=True)+'/'+locale.format("%d",itemCount,grouping=True),0)
+             self.set_status_text(locale.format("%d",sofar,grouping=True)+'/'+locale.format("%d",remaining,grouping=True)+'/'+locale.format("%d",total,grouping=True),1)
+             wx.Yield()
+             buyUrls=[]
+             sellUrls=[]
+             types=list(set(buy.keys() + sell.keys()))
+             for type in types:
+                with open(self.directory+os.sep+self.currentRegion['name']+'-'+type+'-'+date.today().isoformat()+'.csv', 'wb') as csvfile:
+                    writer = csv.writer(csvfile,dialect='excel')
+                    writer.writerow(['Buy','typeid','volume','issued','duration','Volume Entered','Minimum Volume','range','price','locationid','locationname'])
+                    if type in buy:
+                        for buyitem in buy[type]:
+                            writer.writerow([1,buyitem['type']['id'],buyitem['volume'],buyitem['issued'],buyitem['duration'],buyitem['volumeEntered'],buyitem['minVolume'],buyitem['range'],buyitem['price'],buyitem['location']['id'],buyitem['location']['name']])
+                    if type in sell:
+                        for sellitem in sell[type]:
+                            writer.writerow([0,sellitem['type']['id'],sellitem['volume'],sellitem['issued'],sellitem['duration'],sellitem['volumeEntered'],1,sellitem['range'],sellitem['price'],sellitem['location']['id'],sellitem['location']['name']])
         self.set_status_text("Complete.",0)
         self.set_status_text("",1)
         pub.sendMessage('completedDump',data='done')
@@ -170,7 +174,7 @@ class MarketModel:
     def get_multiple_endpoint(self,endpoints,accept):
         if self.settings['expires']<time.time():
             self.refresh_tokens()
-        items=[]
+        items={}
         headers = {'Authorization':'Bearer '+ self.settings['accessToken'],
             'Accept':accept,
             'User-Agent':self.settings['USERAGENT']
@@ -179,7 +183,8 @@ class MarketModel:
         responses=grequests.map(rs)
         for response in responses:
             add=response.json()
-            items.extend(add['items'])
+            if len(add['items']):
+                items[str(add['items'][0]['type']['name'])]=add['items']
             response.close()
         return items
         
