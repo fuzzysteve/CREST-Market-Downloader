@@ -3,8 +3,10 @@ Python (wx python) based market downloader. Downloads all orders in a region.
 
 
 Requires:
-* python 2.something
+* python 2.7.7 (2.7.9 didn't work. haven't tried 2.7.10)
 * [wxPython](http://www.wxpython.org/download.php)
+* grequests
+* gevents
 * requests
 
 You need to set up your own application in the developers site, and fill in details into downloader.ini appropriately.
