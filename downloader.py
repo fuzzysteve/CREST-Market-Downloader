@@ -199,7 +199,7 @@ class MarketModel:
     def refresh_tokens(self):
         headers = {'Authorization':'Basic '+ base64.b64encode(self.settings['CLIENTID']+':'+self.settings['SECRET']),'User-Agent':self.settings['USERAGENT']}
         query = {'grant_type':'refresh_token','refresh_token':self.settings['refreshToken']}
-        r = requests.post(endPoints['authEndpoint']['href'],params=query,headers=headers,verify=self.cert_path)
+        r = requests.post(self.settings['endPoints']['authEndpoint']['href'],params=query,headers=headers,verify=self.cert_path)
         response = r.json()
         self.settings['accessToken']=response['access_token']
         self.settings['refreshToken']=response['refresh_token']
